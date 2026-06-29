@@ -4,7 +4,9 @@ function Get-CIPPLicenseOverview {
     param (
         $TenantFilter,
         $APIName = 'Get License Overview',
-        $Headers
+        $Headers,
+        [switch]$AlertMode,
+        [switch]$IncludeExcluded
     )
 
     $Requests = @(
@@ -62,6 +64,17 @@ function Get-CIPPLicenseOverview {
         $ExcludedSkuList = Get-CIPPAzDataTableEntity @LicenseTable
     }
 
+    # In AlertMode, exclude all licenses in the table (both ExcludedEverywhere and alert-only)
+    # In normal mode, only exclude licenses where ExcludedEverywhere is true (or null for backward compat)
+    if ($AlertMode) {
+        $EffectiveExcludedGuids = @($ExcludedSkuList.GUID)
+    } else {
+        $EffectiveExcludedGuids = @($ExcludedSkuList | Where-Object {
+            $null -eq $_.ExcludedEverywhere -or $_.ExcludedEverywhere -eq $true
+        } | ForEach-Object { $_.GUID })
+    }
+    $DropdownVisibleGuids = @($ExcludedSkuList | Where-Object { $_.ShowInLicenseDropdown -eq $true } | ForEach-Object { $_.GUID })
+
     $AllLicensedUsers = @(($Results | Where-Object { $_.id -eq 'licensedUsers' }).body.value) | Sort-Object -Property displayName
     $UsersBySku = @{}
     foreach ($User in $AllLicensedUsers) {
@@ -109,7 +122,9 @@ function Get-CIPPLicenseOverview {
     $GraphRequest = foreach ($singleReq in $RawGraphRequest) {
         $skuId = $singleReq.Licenses
         foreach ($sku in $skuId) {
-            if ($sku.skuId -in $ExcludedSkuList.GUID) { continue }
+            if ($sku.skuId -in $EffectiveExcludedGuids) {
+                if (!$IncludeExcluded -or $sku.skuId -notin $DropdownVisibleGuids) { continue }
+            }
             $PrettyNameAdmin = $AdminPortalLicenses | Where-Object { $_.aadSkuId -eq $sku.skuId } | Select-Object -ExpandProperty displayName -First 1
             $PrettyNameCSV = ($ConvertTable | Where-Object { $_.guid -eq $sku.skuid }).'Product_Display_Name' | Select-Object -Last 1
             $PrettyName = $PrettyNameAdmin ?? $PrettyNameCSV ?? $sku.skuPartNumber
@@ -119,7 +134,9 @@ function Get-CIPPLicenseOverview {
                 $SubInfo = $SkuIDs | Where-Object { $_.id -eq $Subscription }
                 $diff = $SubInfo.nextLifecycleDateTime - $SubInfo.createdDateTime
                 $Term = 'Term unknown or non-NCE license'
-                if ($diff.Days -ge 360 -and $diff.Days -le 1089) {
+                if ($SubInfo.isTrial) {
+                    $Term = 'Trial'
+                } elseif ($diff.Days -ge 36 -and $diff.Days -le 1089) {
                     $Term = 'Yearly'
                 } elseif ($diff.Days -ge 1090 -and $diff.Days -le 1100) {
                     $Term = '3 Year'
@@ -133,6 +150,7 @@ function Get-CIPPLicenseOverview {
                     TotalLicenses     = $SubInfo.totalLicenses
                     DaysUntilRenew    = $TimeUntilRenew
                     NextLifecycle     = $SubInfo.nextLifecycleDateTime
+                    CreatedDateTime   = $SubInfo.createdDateTime
                     IsTrial           = $SubInfo.isTrial
                     SubscriptionId    = $subinfo.id
                     CSPSubscriptionId = $SubInfo.commerceSubscriptionId
@@ -158,4 +176,3 @@ function Get-CIPPLicenseOverview {
     }
     return ($GraphRequest | Sort-Object -Property License)
 }
-

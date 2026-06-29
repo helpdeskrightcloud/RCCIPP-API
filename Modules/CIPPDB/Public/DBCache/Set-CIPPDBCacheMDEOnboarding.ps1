@@ -21,22 +21,23 @@ function Set-CIPPDBCacheMDEOnboarding {
         $ConnectorUri = "https://graph.microsoft.com/beta/deviceManagement/mobileThreatDefenseConnectors/$ConnectorId"
         try {
             $ConnectorState = New-GraphGetRequest -uri $ConnectorUri -tenantid $TenantFilter
-            $PartnerState = $ConnectorState.partnerState
+            $Connector = $ConnectorState | Select-Object -ExcludeProperty '@odata.context'
+            $Connector | Add-Member -NotePropertyName 'Tenant'       -NotePropertyValue $TenantFilter -Force
+            $Connector | Add-Member -NotePropertyName 'RowKey'       -NotePropertyValue 'MDEOnboarding' -Force
+            $Connector | Add-Member -NotePropertyName 'PartitionKey' -NotePropertyValue $TenantFilter -Force
+            $Result = @($Connector)
         } catch {
-            $PartnerState = 'unavailable'
+            $Result = @(
+                [PSCustomObject]@{
+                    Tenant       = $TenantFilter
+                    partnerState = 'unavailable'
+                    RowKey       = 'MDEOnboarding'
+                    PartitionKey = $TenantFilter
+                }
+            )
         }
 
-        $Result = @(
-            [PSCustomObject]@{
-                Tenant       = $TenantFilter
-                partnerState = $PartnerState
-                RowKey       = 'MDEOnboarding'
-                PartitionKey = $TenantFilter
-            }
-        )
-
-        Add-CIPPDbItem -TenantFilter $TenantFilter -Type 'MDEOnboarding' -Data @($Result)
-        Add-CIPPDbItem -TenantFilter $TenantFilter -Type 'MDEOnboarding' -Data @($Result) -Count
+        Add-CIPPDbItem -TenantFilter $TenantFilter -Type 'MDEOnboarding' -Data @($Result) -AddCount
 
         Write-LogMessage -API 'CIPPDBCache' -tenant $TenantFilter -message 'Cached MDE onboarding status successfully' -sev Debug
     } catch {

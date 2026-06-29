@@ -4,6 +4,8 @@ function Invoke-ListGDAPRelationships {
         Entrypoint,AnyTenant
     .ROLE
         Tenant.Relationship.Read
+    .DESCRIPTION
+        Lists GDAP delegated admin relationships with customer tenants, with optional filtering by relationship ID or OData filter.
     #>
     [CmdletBinding()]
     param($Request, $TriggerMetadata)
@@ -22,7 +24,7 @@ function Invoke-ListGDAPRelationships {
             if ($Filter) {
                 $Uri = "$Uri&`$filter=$Filter"
             }
-            $Results = New-GraphGetRequest -Uri $Uri -tenantid $env:TenantID -NoAuthCheck $true -NoPagination $true -ComplexFilter
+            $Results = New-GraphGetRequest -Uri $Uri -tenantid $env:TenantID -NoAuthCheck $true -ComplexFilter
         }
 
         $Body = @{

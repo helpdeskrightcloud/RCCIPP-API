@@ -43,7 +43,7 @@ function Invoke-CIPPStandardOauthConsent {
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
+        https://docs.cipp.app/user-documentation/tenant/standards/alignment/templates/available-standards
     #>
 
     param($tenant, $settings)
@@ -81,6 +81,16 @@ function Invoke-CIPPStandardOauthConsent {
 
             try {
                 $ExistingIncludesEntries = @($CompareIncludes)
+
+                # Ensure the default M365 management app delegated include exists
+                $DefaultAppId = '00b41c95-dab0-4487-9791-b9d2c32c80f2'
+                $HasDefaultDelegated = $ExistingIncludesEntries | Where-Object {
+                    $_.permissionType -eq 'delegated' -and $_.clientApplicationIds -contains $DefaultAppId
+                }
+                if (-not $HasDefaultDelegated) {
+                    New-GraphPostRequest -tenantid $tenant -Uri 'https://graph.microsoft.com/beta/policies/permissionGrantPolicies/cipp-consent-policy/includes' -Type POST -Body ('{"permissionClassification":"all","permissionType":"delegated","clientApplicationIds":["' + $DefaultAppId + '"]}') -ContentType 'application/json'
+                    $DidRemediationChange = $true
+                }
 
                 foreach ($AllowedApp in $AllowedAppIdsForTenant) {
                     $HasDelegated = $ExistingIncludesEntries | Where-Object {

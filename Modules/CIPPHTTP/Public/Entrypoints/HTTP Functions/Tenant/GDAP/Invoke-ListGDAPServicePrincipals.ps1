@@ -4,6 +4,8 @@ function Invoke-ListGDAPServicePrincipals {
         Entrypoint
     .ROLE
         Tenant.Relationship.Read
+    .DESCRIPTION
+        Lists service principals in a customer tenant owned by the partner or specified vendor tenant IDs, useful for identifying GDAP-related app registrations.
     #>
     [CmdletBinding()]
     param($Request, $TriggerMetadata)
@@ -49,7 +51,7 @@ function Invoke-ListGDAPServicePrincipals {
     $Uri = "https://graph.microsoft.com/beta/servicePrincipals?`$top=$Top&`$select=$Select&`$count=true&`$filter=$Filter"
 
     try {
-        $Results = New-GraphGetRequest -Uri $Uri -tenantid $TenantFilter -NoPagination $true -ComplexFilter
+        $Results = New-GraphGetRequest -Uri $Uri -tenantid $TenantFilter -ComplexFilter
 
         $Body = @{
             Results = @($Results)

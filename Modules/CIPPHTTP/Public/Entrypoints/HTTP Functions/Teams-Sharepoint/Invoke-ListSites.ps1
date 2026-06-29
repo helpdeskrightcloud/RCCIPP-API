@@ -4,6 +4,8 @@ function Invoke-ListSites {
         Entrypoint
     .ROLE
         Sharepoint.Site.Read
+    .DESCRIPTION
+        Lists SharePoint sites or OneDrive usage for a tenant. Requires a Type parameter (SharePointSiteUsage or OneDriveUsageAccount). Supports UseReportDB=true query parameter to retrieve cached data from the reporting database for significantly better performance, especially when querying AllTenants.
     #>
     [CmdletBinding()]
     param($Request, $TriggerMetadata)
@@ -12,7 +14,7 @@ function Invoke-ListSites {
 
     $TenantFilter = $Request.Query.TenantFilter
     $Type = $Request.Query.Type
-    $UserUPN = $Request.Query.UserUPN
+    $UseReportDB = $Request.Query.UseReportDB
 
     if (!$TenantFilter) {
         return ([HttpResponseContext]@{
@@ -26,6 +28,31 @@ function Invoke-ListSites {
                 StatusCode = [HttpStatusCode]::BadRequest
                 Body       = 'Type is required'
             })
+    }
+
+    if ($TenantFilter -eq 'AllTenants' -or $UseReportDB -eq 'true') {
+        try {
+            if ($Type -eq 'SharePointSiteUsage') {
+                $GraphRequest = Get-CIPPSharePointSiteUsageReport -TenantFilter $TenantFilter -ErrorAction Stop
+            } elseif ($Type -eq 'OneDriveUsageAccount') {
+                $GraphRequest = Get-CIPPOneDriveUsageReport -TenantFilter $TenantFilter -ErrorAction Stop
+            }
+            $StatusCode = [HttpStatusCode]::OK
+        } catch {
+            $StatusCode = [HttpStatusCode]::InternalServerError
+            $GraphRequest = $_.Exception.Message
+        }
+
+        if ($null -ne $GraphRequest) {
+            if ($Request.query.URLOnly -eq 'true') {
+                $GraphRequest = $GraphRequest | Where-Object { $null -ne $_.webUrl }
+            }
+
+            return ([HttpResponseContext]@{
+                    StatusCode = $StatusCode
+                    Body       = @($GraphRequest | Sort-Object -Property displayName)
+                })
+        }
     }
 
     $Tenant = Get-Tenants -TenantFilter $TenantFilter
@@ -53,9 +80,17 @@ function Invoke-ListSites {
 
         $Result = New-GraphBulkRequest -tenantid $TenantFilter -Requests @($BulkRequests) -asapp $true
         $Sites = ($Result | Where-Object { $_.id -eq 'listAllSites' }).body.value
-        $UsageBase64 = ($Result | Where-Object { $_.id -eq 'usage' }).body
-        $UsageJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($UsageBase64))
-        $Usage = ($UsageJson | ConvertFrom-Json).value
+        $UsageResponse = $Result | Where-Object { $_.id -eq 'usage' }
+        if ($UsageResponse.status -and $UsageResponse.status -ne 200) {
+            throw ($UsageResponse.body.error.message ?? "Usage report request failed with status $($UsageResponse.status)")
+        }
+        $UsageBody = $UsageResponse.body
+        if ($UsageBody -is [string]) {
+            $UsageJson = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($UsageBody))
+            $Usage = ($UsageJson | ConvertFrom-Json).value
+        } else {
+            $Usage = @($UsageBody.value)
+        }
 
         $GraphRequest = foreach ($Site in $Sites) {
             $SiteUsage = $Usage | Where-Object { $_.siteId -eq $Site.sharepointIds.siteId }

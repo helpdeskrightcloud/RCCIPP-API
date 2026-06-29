@@ -38,14 +38,12 @@ function Push-ExecCIPPDBCache {
 
         # Single-type mode (legacy) — used by HTTP endpoint for on-demand cache refresh
         $Name = $Item.Name
-        $Types = $Item.Types
+        $Types = @($Item.Types | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -ne 'None' })
 
         Write-Information "Collecting $Name for tenant $TenantFilter"
 
         # Build the full function name
         $FullFunctionName = "Set-CIPPDBCache$Name"
-
-        # Check if function exists
         $Function = Get-Command -Name $FullFunctionName -ErrorAction SilentlyContinue
         if (-not $Function) {
             throw "Function $FullFunctionName does not exist"
@@ -62,7 +60,8 @@ function Push-ExecCIPPDBCache {
         }
 
         # Add Types if provided (for Mailboxes function)
-        if ($Types) {
+        $FunctionSupportsTypes = $Function.Parameters.ContainsKey('Types')
+        if ($Types.Count -gt 0 -and $FunctionSupportsTypes) {
             $CacheFunctionParams.Types = $Types
         }
 

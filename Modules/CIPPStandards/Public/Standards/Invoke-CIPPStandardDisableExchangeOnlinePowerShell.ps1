@@ -36,11 +36,11 @@ function Invoke-CIPPStandardDisableExchangeOnlinePowerShell {
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
+        https://docs.cipp.app/user-documentation/tenant/standards/alignment/templates/available-standards
     #>
 
     param($Tenant, $Settings)
-    $TestResult = Test-CIPPStandardLicense -StandardName 'DisableExchangeOnlinePowerShell' -TenantFilter $Tenant -RequiredCapabilities @('EXCHANGE_S_STANDARD', 'EXCHANGE_S_ENTERPRISE', 'EXCHANGE_S_STANDARD_GOV', 'EXCHANGE_S_ENTERPRISE_GOV', 'EXCHANGE_LITE') #No Foundation because that does not allow powershell access
+    $TestResult = Test-CIPPStandardLicense -StandardName 'DisableExchangeOnlinePowerShell' -TenantFilter $Tenant -Preset Exchange #No Foundation because that does not allow powershell access
 
     if ($TestResult -eq $false) {
         return $true
@@ -49,8 +49,24 @@ function Invoke-CIPPStandardDisableExchangeOnlinePowerShell {
 
     try {
 
-        $AdminUsers = (New-GraphGetRequest -uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments?$expand=principal' -tenantid $Tenant).principal.userPrincipalName
-        $UsersWithPowerShell = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-User' -Select 'userPrincipalName, identity, guid, remotePowerShellEnabled' | Where-Object { $_.RemotePowerShellEnabled -eq $true -and $_.userPrincipalName -notin $AdminUsers }
+        $RoleAssignments = New-GraphGetRequest -uri 'https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments?$expand=principal' -tenantid $Tenant
+        $DirectAdminUPNs = ($RoleAssignments | Where-Object { $_.principal.'@odata.type' -eq '#microsoft.graph.user' }).principal.userPrincipalName
+        $AdminGroupIds = ($RoleAssignments | Where-Object { $_.principal.'@odata.type' -eq '#microsoft.graph.group' }).principal.id | Select-Object -Unique
+
+        $GroupMemberUPNs = if ($AdminGroupIds) {
+            $BulkRequests = foreach ($GroupId in $AdminGroupIds) {
+                @{
+                    id     = $GroupId
+                    method = 'GET'
+                    url    = "groups/$GroupId/transitiveMembers/microsoft.graph.user?`$select=userPrincipalName"
+                }
+            }
+            $BulkResults = New-GraphBulkRequest -tenantid $Tenant -Requests @($BulkRequests) -Version 'v1.0'
+            $BulkResults.body.value.userPrincipalName
+        }
+
+        $AdminUsers = @($DirectAdminUPNs) + @($GroupMemberUPNs) | Where-Object { $_ } | Select-Object -Unique
+        $UsersWithPowerShell = New-CIPPDbRequest -TenantFilter $Tenant -Type 'Mailboxes' | Where-Object { $_.RemotePowerShellEnabled -eq $true -and $_.UPN -notin $AdminUsers }
         $PowerShellEnabledCount = ($UsersWithPowerShell | Measure-Object).Count
         $StateIsCorrect = $PowerShellEnabledCount -eq 0
     } catch {
@@ -67,7 +83,7 @@ function Invoke-CIPPStandardDisableExchangeOnlinePowerShell {
                 @{
                     CmdletInput = @{
                         CmdletName = 'Set-User'
-                        Parameters = @{Identity = $User.Guid; RemotePowerShellEnabled = $false }
+                        Parameters = @{Identity = $User.Guid ?? $User.UPN; RemotePowerShellEnabled = $false }
                     }
                 }
             }
